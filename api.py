@@ -1,7 +1,7 @@
 import requests
 from os import getenv
 from base64 import b64encode
-from image_resizer import resize_image_to_max_size
+from receipt_scanner.image_resizer import resize_image_to_max_size
 from os.path import dirname, basename, join as pjoin
 from os import remove
 import io
@@ -25,7 +25,8 @@ def ocr_space_api_file(filename, overlay=False, api_key='helloworld', language='
                'apikey': api_key,
                'language': language,
                'isTable': True,
-               'OCREngine': 2,
+               'OCREngine': 1,
+            #    'detectOrientation': False,
                }
     with open(filename, 'rb') as f:
         r = requests.post('https://api.ocr.space/parse/image',
@@ -63,18 +64,17 @@ def ocr_space_api_buffer(buffer_bytes, overlay=False, api_key='helloworld', lang
     return r.content.decode()
 
 
-def api_scan(arguments):
+def api_scan(input_image: str|io.BytesIO):
     # fetch API key
     key = getenv("OCR_SPACE_KEY")
     if not key:
         raise Exception("OCR Space API key missing ('OCR_SPACE_KEY' env var expected)")
     # resize image
-    input_image = arguments.IMAGE
-    resized_image, quality = resize_image_to_max_size(input_image, 1024*1024)
+    resized_image_bytes, quality = resize_image_to_max_size(input_image, 1024*1024)
     outname = f"tmp_{basename(input_image)}"
     output_image = pjoin(dirname(input_image), outname)
     with io.open(output_image, "wb") as tmpfile:
-        tmpfile.write(resized_image.getbuffer())
+        tmpfile.write(resized_image_bytes)
     restext = ocr_space_api_file(output_image, api_key=key)
     # debug
     # print(restext)

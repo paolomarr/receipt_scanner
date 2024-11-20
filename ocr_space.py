@@ -1,14 +1,14 @@
 import argparse
-from calendar import Day
 from datetime import datetime
 from json import loads as jlds
 import io
 import re
 import logging
+from receipt_scanner.api import api_scan
 
-from api import api_scan
 
 class ReceiptSummary:
+    TOTAL_GUESS_NOT_AVALABLE_STRING = "n.a."
     total_guess_patterns = [
         re.compile(r'TOTALE COMPLESSIVO', re.IGNORECASE),
         re.compile(r'^TOTALE', re.IGNORECASE),
@@ -19,10 +19,12 @@ class ReceiptSummary:
 
     def __init__(self):
         self.items = []
-        self.ocrspace_results: OCRSpaceResult = None
+        self._ocrspace_results: OCRSpaceResult = None
+        self._cached_total_guess = None
 
     def __str__(self):
-        return f"{self.vendor}, on {self.date.strftime("%x %X")} - Total: {self.total_guess()}"
+        datestr = self.date.strftime("%x %X")
+        return f"{self.vendor}, on {datestr} - Total: {self.total_guess()}"
 
     @staticmethod
     def fromOCRSpaceJsonResponse(jres: str):
@@ -32,12 +34,21 @@ class ReceiptSummary:
         return summary
 
     @property
+    def ocrspace_results(self) -> OCRSpaceResult:
+        return self._ocrspace_results
+
+    @ocrspace_results.setter
+    def ocrspace_results(self, results):
+        self._cached_total_guess = None
+        self._ocrspace_results = results
+
+    @property
     def vendor(self) -> str:
         parsed_text_lines = self.parsed_text_lines()
         vendor = None
         if parsed_text_lines:
             vendor = re.sub(r'[^\w\s]', "", parsed_text_lines[0]).strip() # dumb guess
-        return vendor or "n.a."
+        return vendor or ReceiptSummary.TOTAL_GUESS_NOT_AVALABLE_STRING
 
     @property
     def date(self) -> datetime:
@@ -58,6 +69,8 @@ class ReceiptSummary:
         
     def total_guess(self) -> float:
         parsed_text_lines = self.parsed_text_lines()
+        if self._cached_total_guess:
+            return self._cached_total_guess
         total_guess = None
         if parsed_text_lines:
             for pattern in ReceiptSummary.total_guess_patterns:
@@ -115,6 +128,7 @@ class OCRSpaceWord:
     @property
     def right(self):
         return self.left + self.width
+
 
 class OCRSpaceLine:
     line_text: str
@@ -286,7 +300,7 @@ if __name__ == "__main__":
     arguments = parser.parse_args()
     if arguments.which == "api":
         # TODO: handle result
-        restext = api_scan(arguments)
+        restext = api_scan(arguments.IMAGE)
         summary = ReceiptSummary.fromOCRSpaceJsonResponse(restext)
         print(str(summary))
         
