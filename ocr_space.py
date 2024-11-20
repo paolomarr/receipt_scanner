@@ -7,6 +7,156 @@ import logging
 from receipt_scanner.api import api_scan
 
 
+class OCRSpaceWord:
+    word_text: str
+    left: int
+    top: int
+    height: int
+    width: int
+
+    @staticmethod
+    def from_dict(dictobj: dict):
+        ret = OCRSpaceWord()
+        ret.word_text = dictobj.get("WordText")
+        ret.left = int(dictobj.get("Left"))
+        ret.top = int(dictobj.get("Top"))
+        ret.height = int(dictobj.get("Height"))
+        ret.width = int(dictobj.get("Width"))
+        return ret
+
+    @property
+    def bottom(self):
+        return self.top + self.height
+
+    @property
+    def right(self):
+        return self.left + self.width
+
+
+class OCRSpaceLine:
+    line_text: str
+    words: list[OCRSpaceWord]
+    max_height: int
+    min_top: int
+
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return self.line_text
+
+    @staticmethod
+    def from_dict(dictobj: dict):
+        ret = OCRSpaceLine()
+        ret.line_text = dictobj.get("LineText")
+        ret.words = [OCRSpaceWord.from_dict(worddict) for worddict in dictobj.get("Words", [])]
+        ret.max_height = int(dictobj.get("MaxHeight"))
+        ret.min_top = int(dictobj.get("MinTop"))
+        return ret
+
+    def is_same_line(self, other):
+        selfhigh = self.upper_bound
+        selfbottom = self.lower_bound
+        otherhigh = other.upper_bound
+        otherbottom = other.lower_bound
+        return selfhigh <= otherbottom and otherhigh <= selfbottom
+
+    @property
+    def left_bound(self):
+        allefts = [w.left for w in self.words]
+        if len(allefts) > 0:
+            return min(allefts)
+        return -1
+    @property
+    def right_bound(self):
+        allrights = [w.right for w in self.words]
+        if len(allrights) > 0:
+            return max(allrights)
+        return -1
+    @property
+    def lower_bound(self):
+        alllows = [w.bottom for w in self.words]
+        if len(alllows) > 0:
+            return max(alllows)
+    @property
+    def upper_bound(self):
+        allups = [w.top for w in self.words]
+        if len(allups) > 0:
+            return min(allups)
+
+
+class OCRSpaceOverlay:
+    lines: list[OCRSpaceLine]
+    @staticmethod
+    def from_dict(dictobj: dict):
+        ret = OCRSpaceOverlay()
+        ret.lines = [OCRSpaceLine.from_dict(linedict) for linedict in dictobj.get("Lines", [])]
+        return ret
+
+    def lines_sorted_by_upperbound(self) -> list[OCRSpaceLine]:
+        return sorted(self.lines, key=lambda line: line.upper_bound, reverse=False)
+
+
+class OCRSpaceParsedResult(object):
+    overlay: OCRSpaceOverlay
+    file_parse_exit_code: int
+    text_orientation: str
+    parsed_text: str
+    error_message: str
+    error_details: str
+    @staticmethod
+    def from_dict(dictobj: dict):
+        ret = OCRSpaceParsedResult()
+        overlay_obj = dictobj.get("Overlay") or dictobj.get("TextOverlay", None)        
+        ret.overlay = OCRSpaceOverlay.from_dict(overlay_obj)
+        ret.file_parse_exit_code = int(dictobj.get("FileParseExitCode"))
+        ret.text_orientation = dictobj.get("TextOrientation")
+        ret.parsed_text = dictobj.get("ParsedText")
+        ret.error_message = dictobj.get("ErrorMessage")
+        ret.error_details = dictobj.get("ErrorDetails")
+        return ret
+    
+    def tableize(self):
+        table = []
+        sorted = self.overlay.lines_sorted_by_upperbound()
+        #debug 
+        print("Raw lines sorted:")
+        print("\n".join([str(line) for line in sorted]))
+        print("")
+        for gIdx, line in enumerate(sorted):
+            if gIdx == 0:
+                table.append([line])
+            else:
+                previous_line = table[-1][0]
+                if previous_line.is_same_line(line):
+                    table[-1].append(line)
+                else: # end of table line
+                    table[-1].sort(key=lambda col: col.left_bound)
+                    # debug
+                    print("|".join([str(col) for col in table[-1]]))
+
+                    table.append([line])
+        return table
+
+
+class OCRSpaceResult:
+    parsed_results: list[OCRSpaceParsedResult]
+    ocr_exit_code: int
+    is_errored_on_processing: bool
+    processing_time_in_milliseconds: float
+    searchable_pdf_url: str
+
+    @staticmethod
+    def from_dict(dictobj: dict):
+        ret = OCRSpaceResult
+        ret.parsed_results = [OCRSpaceParsedResult.from_dict(res) for res in dictobj.get("ParsedResults")]
+        ret.ocr_exit_code = int(dictobj.get("OCRExitCode"))
+        ret.is_errored_on_processing = bool(dictobj.get("IsErroredOnProcessing"))
+        ret.processing_time_in_milliseconds = float(dictobj.get("ProcessingTimeInMilliseconds"))
+        ret.searchable_pdf_url = dictobj.get("SearchablePDFURL")
+        return ret
+
+
 class ReceiptSummary:
     TOTAL_GUESS_NOT_AVALABLE_STRING = "n.a."
     total_guess_patterns = [
@@ -103,153 +253,6 @@ class ReceiptSummary:
             return parsed_text_lines
         return None
 
-
-class OCRSpaceWord:
-    word_text: str
-    left: int
-    top: int
-    height: int
-    width: int
-
-    @staticmethod
-    def from_dict(dictobj: dict):
-        ret = OCRSpaceWord()
-        ret.word_text = dictobj.get("WordText")
-        ret.left = int(dictobj.get("Left"))
-        ret.top = int(dictobj.get("Top"))
-        ret.height = int(dictobj.get("Height"))
-        ret.width = int(dictobj.get("Width"))
-        return ret
-
-    @property
-    def bottom(self):
-        return self.top + self.height
-
-    @property
-    def right(self):
-        return self.left + self.width
-
-
-class OCRSpaceLine:
-    line_text: str
-    words: list[OCRSpaceWord]
-    max_height: int
-    min_top: int
-
-    def __init__(self):
-        pass
-
-    def __str__(self):
-        return self.line_text
-
-    @staticmethod
-    def from_dict(dictobj: dict):
-        ret = OCRSpaceLine()
-        ret.line_text = dictobj.get("LineText")
-        ret.words = [OCRSpaceWord.from_dict(worddict) for worddict in dictobj.get("Words", [])]
-        ret.max_height = int(dictobj.get("MaxHeight"))
-        ret.min_top = int(dictobj.get("MinTop"))
-        return ret
-
-    def is_same_line(self, other):
-        selfhigh = self.upper_bound
-        selfbottom = self.lower_bound
-        otherhigh = other.upper_bound
-        otherbottom = other.lower_bound
-        return selfhigh <= otherbottom and otherhigh <= selfbottom
-
-    @property
-    def left_bound(self):
-        allefts = [w.left for w in self.words]
-        if len(allefts) > 0:
-            return min(allefts)
-        return -1
-    @property
-    def right_bound(self):
-        allrights = [w.right for w in self.words]
-        if len(allrights) > 0:
-            return max(allrights)
-        return -1
-    @property
-    def lower_bound(self):
-        alllows = [w.bottom for w in self.words]
-        if len(alllows) > 0:
-            return max(alllows)
-    @property
-    def upper_bound(self):
-        allups = [w.top for w in self.words]
-        if len(allups) > 0:
-            return min(allups)
-
-
-class OCRSpaceOverlay:
-    lines: list[OCRSpaceLine]
-    @staticmethod
-    def from_dict(dictobj: dict):
-        ret = OCRSpaceOverlay()
-        ret.lines = [OCRSpaceLine.from_dict(linedict) for linedict in dictobj.get("Lines", [])]
-        return ret
-
-    def lines_sorted_by_upperbound(self) -> list[OCRSpaceLine]:
-        return sorted(self.lines, key=lambda line: line.upper_bound, reverse=False)
-
-class OCRSpaceParsedResult(object):
-    overlay: OCRSpaceOverlay
-    file_parse_exit_code: int
-    text_orientation: str
-    parsed_text: str
-    error_message: str
-    error_details: str
-    @staticmethod
-    def from_dict(dictobj: dict):
-        ret = OCRSpaceParsedResult()
-        overlay_obj = dictobj.get("Overlay") or dictobj.get("TextOverlay", None)        
-        ret.overlay = OCRSpaceOverlay.from_dict(overlay_obj)
-        ret.file_parse_exit_code = int(dictobj.get("FileParseExitCode"))
-        ret.text_orientation = dictobj.get("TextOrientation")
-        ret.parsed_text = dictobj.get("ParsedText")
-        ret.error_message = dictobj.get("ErrorMessage")
-        ret.error_details = dictobj.get("ErrorDetails")
-        return ret
-    
-    def tableize(self):
-        table = []
-        sorted = self.overlay.lines_sorted_by_upperbound()
-        #debug 
-        print("Raw lines sorted:")
-        print("\n".join([str(line) for line in sorted]))
-        print("")
-        for gIdx, line in enumerate(sorted):
-            if gIdx == 0:
-                table.append([line])
-            else:
-                previous_line = table[-1][0]
-                if previous_line.is_same_line(line):
-                    table[-1].append(line)
-                else: # end of table line
-                    table[-1].sort(key=lambda col: col.left_bound)
-                    # debug
-                    print("|".join([str(col) for col in table[-1]]))
-
-                    table.append([line])
-        return table
-
-class OCRSpaceResult:
-    parsed_results: list[OCRSpaceParsedResult]
-    ocr_exit_code: int
-    is_errored_on_processing: bool
-    processing_time_in_milliseconds: float
-    searchable_pdf_url: str
-
-    @staticmethod
-    def from_dict(dictobj: dict):
-        ret = OCRSpaceResult
-        ret.parsed_results = [OCRSpaceParsedResult.from_dict(res) for res in dictobj.get("ParsedResults")]
-        ret.ocr_exit_code = int(dictobj.get("OCRExitCode"))
-        ret.is_errored_on_processing = bool(dictobj.get("IsErroredOnProcessing"))
-        ret.processing_time_in_milliseconds = float(dictobj.get("ProcessingTimeInMilliseconds"))
-        ret.searchable_pdf_url = dictobj.get("SearchablePDFURL")
-        return ret
 
 def parse_ocrspace_json_text(result_json: str):
     raw_result = jlds(result_json)
